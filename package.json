@@ -1,0 +1,51 @@
+{
+  "name": "skill-periodistico",
+  "version": "1.0.0",
+  "description": "Agente periodístico completo: criterio, decisión, verificación y redacción, con integración a Radar Notiviral (API FENIX). Enfoque Argentina / Salta Capital.",
+  "bin": {
+    "skill-periodistico": "bin/cli.js"
+  },
+  "main": "src/index.js",
+  "files": [
+    "bin",
+    "src",
+    "skills",
+    "voces",
+    "plantillas",
+    "evals",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node test/run.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "skill",
+    "periodismo",
+    "agent",
+    "claude",
+    "mcp",
+    "titulares",
+    "argentina",
+    "salta",
+    "editorial-score",
+    "newsroom",
+    "audience",
+    "retention",
+    "radar-notiviral",
+    "apifenix",
+    "verificacion",
+    "fact-check",
+    "multicanal",
+    "seo"
+  ],
+  "author": "Facundo Cercuetti",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/facucercuetti/skill-periodistico.git"
+  }
+}
