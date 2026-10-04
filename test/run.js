@@ -6,11 +6,18 @@ const { escanearRadar, senalesDelMomento, prepararPieza, digestoRadar } = requir
 const {
   clasificarEvidencia, preguntasPrueba, verificarCifra, detectarAlertas, controlFinal,
 } = require('../src/verificacion.js');
+const {
+  PROVEEDORES, LLMError, extraerJson, estadoKeys, detectarProveedor, resolveKey,
+} = require('../src/llm.js');
 
 let ok = 0;
+const pendientes = [];
 function t(name, fn) {
-  try { fn(); ok++; console.log('  ok  ' + name); }
-  catch (e) { console.error('  FAIL ' + name + ': ' + e.message); process.exitCode = 1; }
+  const p = (async () => {
+    try { await fn(); ok++; console.log('  ok  ' + name); }
+    catch (e) { console.error('  FAIL ' + name + ': ' + e.message); process.exitCode = 1; }
+  })();
+  pendientes.push(p);
 }
 
 console.log('Skills');
@@ -20,14 +27,14 @@ for (const s of lib.listSkills()) {
     assert(lib.loadSkill(s.name).length > 200);
   });
 }
-t('existen los skills esperados (19)', () => {
+t('existen los skills esperados (21)', () => {
   const names = lib.listSkills().map((s) => s.name).sort();
   [
     'periodista-criterio', 'titulares-impacto', 'redaccion-narrativa', 'narrativa-video',
     'audiencia-argentina', 'contexto-salta', 'formatos-salida', 'psicologia-atencion',
     'score-editorial', 'detector-emocional', 'anti-saturacion', 'aprendizaje-audiencia',
     'radar-notiviral', 'verificacion-fuentes', 'etica-legal', 'datos-y-cifras',
-    'multicanal', 'agenda-propria', 'cobertura-crisis', 'seo-noticias',
+    'multicanal', 'agenda-propria', 'cobertura-crisis', 'seo-noticias', 'integracion-llm',
   ].forEach((n) => assert(names.includes(n), 'falta ' + n));
 });
 
@@ -199,4 +206,53 @@ t('evals tienen estructura válida', () => {
   });
 });
 
-console.log(`\n${ok} pruebas ok`);
+console.log('LLM');
+t('proveedores definidos con endpoint y modelo default', () => {
+  for (const [nombre, p] of Object.entries(PROVEEDORES)) {
+    assert(p.base.startsWith('https://'), 'endpoint inválido en ' + nombre);
+    assert(p.modelo_default, 'falta modelo default en ' + nombre);
+    assert(p.env, 'falta env en ' + nombre);
+    assert(typeof p.header === 'function', 'falta header en ' + nombre);
+  }
+});
+t('extraerJson parsea JSON puro, bloque ```json y texto alrededor', () => {
+  assert.deepStrictEqual(extraerJson('{"a":1}'), { a: 1 });
+  assert.deepStrictEqual(extraerJson('```json\n{"a":1}\n```'), { a: 1 });
+  assert.deepStrictEqual(extraerJson('Aquí va:\n{"a":1}\nfin'), { a: 1 });
+  assert.strictEqual(extraerJson('no hay json'), null);
+});
+t('estadoKeys reporta los tres proveedores', () => {
+  const e = estadoKeys();
+  assert(e.openai && e.groq && e.openrouter);
+  assert(e.openai.env === 'OPENAI_KEY');
+  assert(e.groq.env === 'GROQ_KEY');
+  assert(e.openrouter.env === 'OPENROUTER_KEY');
+});
+t('detectarProveedor sin keys devuelve null', () => {
+  const saved = { ...process.env };
+  delete process.env.OPENAI_KEY;
+  delete process.env.GROQ_KEY;
+  delete process.env.OPENROUTER_KEY;
+  assert.strictEqual(detectarProveedor(), null);
+  process.env.OPENAI_KEY = 'sk-test';
+  assert.strictEqual(detectarProveedor(), 'openai');
+  delete process.env.OPENAI_KEY;
+  Object.assign(process.env, saved);
+});
+t('generar sin proveedor ni key lanza LLMError', async () => {
+  const saved = { ...process.env };
+  delete process.env.OPENAI_KEY;
+  delete process.env.GROQ_KEY;
+  delete process.env.OPENROUTER_KEY;
+  const { generar } = require('../src/llm.js');
+  await assert.rejects(
+    () => generar({ system: 'a', user: 'b' }),
+    (e) => e instanceof LLMError && /Sin proveedor LLM/.test(e.message)
+  );
+  Object.assign(process.env, saved);
+});
+
+(async () => {
+  await Promise.all(pendientes);
+  console.log(`\n${ok} pruebas ok`);
+})();

@@ -26,6 +26,9 @@ const {
 const {
   clasificarEvidencia, preguntasPrueba, verificarCifra, detectarAlertas, controlFinal,
 } = require('../src/verificacion.js');
+const {
+  generar, generarJson, estadoKeys, detectarProveedor, PROVEEDORES,
+} = require('../src/llm.js');
 
 const [, , cmd, ...rest] = process.argv;
 
@@ -60,17 +63,23 @@ Uso:
   npx skill-periodistico señales [--provincia AR-A] [--ventana 6h] [--key K] [--json]
   npx skill-periodistico gaps [--provincia AR-A] [--ventana 24h] [--key K] [--json]
   npx skill-periodistico pipeline <tarea> [--provincia AR-A] [--ventana 6h] [--key K] [--json]
+  npx skill-periodistico generar <tarea> [--provincia AR-A] [--ventana 6h] [--proveedor openai|groq|openrouter] [--modelo M] [--json]
   npx skill-periodistico digesto [--provincia AR-A] [--ventana 6h] [--key K] [--json]
   npx skill-periodistico verificar --afirmacion "..." [--material "..."] [--json]
+  npx skill-periodistico keys [--json]
 
 Tareas: ${lib.listTareas().join(', ')}
 Voces:  ${lib.listVoces().join(', ')}
+
+Proveedores LLM (necesarios para generar piezas):
+  OPENAI_KEY, GROQ_KEY u OPENROUTER_KEY (env, ~/.config/skill-periodistico/<proveedor>.key o --key)
 
 Ejemplos:
   npx skill-periodistico install
   npx skill-periodistico radar --provincia AR-A --ventana 6h --orden velocidad
   npx skill-periodistico pipeline placa --provincia AR-A --ventana 6h --medio "Mi Medio"
-  npx skill-periodistico gaps --provincia AR-A --ventana 24h`);
+  npx skill-periodistico generar placa --provincia AR-A --ventana 6h --proveedor groq
+  npx skill-periodistico keys`);
 }
 
 function install(flags) {
@@ -253,6 +262,102 @@ function cmdVerificar(flags) {
   if (resultado.alertas.length) console.log(`Alertas: ${resultado.alertas.join('; ')}`);
 }
 
+function cmdKeys(flags) {
+  const estado = estadoKeys();
+  if (flags.json) { outJson(estado); return; }
+  console.log('Proveedores LLM (necesarios para generar piezas):\n');
+  for (const [nombre, info] of Object.entries(estado)) {
+    const marca = info.configurada ? '✓' : '✗';
+    console.log(`${marca} ${nombre.padEnd(12)} env: ${info.env.padEnd(15)} modelo default: ${info.modelo_default}`);
+  }
+  const detectado = detectarProveedor();
+  console.log(`\nProveedor activo: ${detectado || 'ninguno (solo prompts, sin generación)'}`);
+  if (!detectado) {
+    console.log('\nPara generar piezas, definí una de estas variables de entorno:');
+    console.log('  export OPENAI_KEY="sk-..."');
+    console.log('  export GROQ_KEY="gsk_..."');
+    console.log('  export OPENROUTER_KEY="sk-or-..."');
+    console.log('O guardalas en ~/.config/skill-periodistico/<proveedor>.key');
+  }
+}
+
+async function cmdGenerar(flags, pos) {
+  const tarea = pos[0];
+  if (!tarea) {
+    console.error('Falta la tarea. Opciones: ' + lib.listTareas().join(', '));
+    process.exit(1);
+  }
+  const api = new ApiFenix({ apiKey: flags.key });
+  if (!api.keyConfigured) {
+    console.error('Falta la API key de Radar Notiviral. Definí FENIX_KEY, ~/.fenix-key o usá --key.');
+    process.exit(1);
+  }
+  const proveedor = flags.proveedor || detectarProveedor();
+  if (!proveedor) {
+    console.error('Sin proveedor LLM. Usá --proveedor openai|groq|openrouter y definí OPENAI_KEY, GROQ_KEY u OPENROUTER_KEY.');
+    process.exit(1);
+  }
+  const escaneo = await escanearRadar({
+    provincia: flags.provincia, region: flags.region, tema: flags.tema,
+    ventana: flags.ventana || '6h', orden: flags.orden || 'fecha',
+    min_fuentes: flags.min_fuentes, clusters: flags.clusters, huerfanas: flags.huerfanas,
+  }, api);
+  const candidata = escaneo.candidatas[0];
+  if (!candidata) {
+    console.error('No hay candidatas en el radar con esos filtros.');
+    process.exit(1);
+  }
+  const vars = {};
+  if (flags.medio) vars.nombre_medio = flags.medio;
+  if (flags.region) vars.region = flags.region;
+  if (flags.voz) vars.voz = flags.voz;
+  if (flags.fuentes) vars.fuentes = flags.fuentes;
+  if (flags.titulo) vars.titulo = flags.titulo;
+  if (flags.bajada) vars.bajada = flags.bajada;
+  if (flags.cuerpo) vars.cuerpo = flags.cuerpo;
+  if (flags.provincia) vars.provincia = flags.provincia;
+  if (flags.tema) vars.tema = flags.tema;
+  if (flags.ventana) vars.ventana = flags.ventana;
+  if (flags.nivel_evidencia) vars.nivel_evidencia = flags.nivel_evidencia;
+
+  const pieza = prepararPieza({ item: candidata, tarea, vars });
+  if (pieza.prompt.missing.length) {
+    console.error('Variables sin completar: ' + pieza.prompt.missing.join(', '));
+    process.exit(1);
+  }
+
+  console.error(`Generando ${tarea} con ${proveedor}... (candidata: ${candidata.titulo})`);
+  const resultado = await generarJson({
+    proveedor,
+    modelo: flags.modelo,
+    system: pieza.prompt.system,
+    user: pieza.prompt.user,
+    key: flags.key,
+    temperature: flags.temperature ? Number(flags.temperature) : 0.3,
+  });
+
+  if (flags.json) {
+    outJson({
+      tarea,
+      candidata: pieza.triaje,
+      decision: pieza.decision,
+      proveedor: resultado.proveedor,
+      modelo: resultado.modelo,
+      uso: resultado.uso,
+      pieza: resultado.json,
+      texto_crudo: resultado.json ? undefined : resultado.texto,
+    });
+    return;
+  }
+  console.log(`\n===== PIEZA GENERADA (${tarea} · ${resultado.proveedor} · ${resultado.modelo}) =====`);
+  if (resultado.json) {
+    outJson(resultado.json);
+  } else {
+    console.log(resultado.texto);
+    console.error('\n(la respuesta no era JSON válido; usá --json para ver el texto crudo)');
+  }
+}
+
 function main() {
   const { flags, pos } = parseArgs(rest);
   switch (cmd) {
@@ -307,10 +412,14 @@ function main() {
       return cmdGaps(flags);
     case 'pipeline':
       return cmdPipeline(flags, pos);
+    case 'generar':
+      return cmdGenerar(flags, pos);
     case 'digesto':
       return cmdDigesto(flags);
     case 'verificar':
       return cmdVerificar(flags);
+    case 'keys':
+      return cmdKeys(flags);
     default:
       return help();
   }

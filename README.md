@@ -13,13 +13,14 @@ Y ahora, con Radar Notiviral, el ciclo empieza con señales reales:
 ## Qué es nuevo en 1.0.0
 
 - **Integración con Radar Notiviral (API FENIX)**: cliente completo de los 12+ endpoints, con rate limiting, cache y normalización de HTML a texto plano.
+- **Generación de piezas con LLM**: conectá OPENAI, GROQ u OPENROUTER y generá la pieza completa (radar → prompt → modelo → JSON).
 - **Pipeline de redacción**: `radar → triaje → score → prompt` en un solo comando.
-- **8 skills nuevos**: `radar-notiviral`, `verificacion-fuentes`, `etica-legal`, `datos-y-cifras`, `multicanal`, `agenda-propria`, `cobertura-crisis`, `seo-noticias`.
+- **9 skills nuevos**: `radar-notiviral`, `verificacion-fuentes`, `etica-legal`, `datos-y-cifras`, `multicanal`, `agenda-propria`, `cobertura-crisis`, `seo-noticias`, `integracion-llm`.
 - **8 tareas nuevas**: `radar-digest`, `gap-alerta`, `cluster-seguimiento`, `primicia-nota`, `verificacion-nota`, `servicio-util`, `hilo-x`, `newsletter-bloque`.
 - **3 voces nuevas**: `datos-frio`, `alerta-servicio`, `analisis-corto`.
 - **Módulo de verificación**: escala N1-N6 ejecutable, 6 preguntas de prueba, verificación de cifras, detección de alertas y control final.
 - **20 casos adversariales** en evals (vs 8 en las versiones anteriores).
-- **Comandos CLI nuevos**: `radar`, `señales`, `gaps`, `pipeline`, `digesto`, `verificar`.
+- **Comandos CLI nuevos**: `radar`, `señales`, `gaps`, `pipeline`, `generar`, `digesto`, `verificar`, `keys`.
 
 ## Instalación
 
@@ -57,6 +58,28 @@ echo "tu_key" > ~/.fenix-key
 npx skill-periodistico radar --key "tu_key"
 ```
 
+## Configurar el LLM (obligatorio para generar piezas)
+
+**Sin una de estas keys, el agente solo arma prompts y no puede producir contenido.**
+
+| Proveedor | Variable | Modelo default |
+|---|---|---|
+| OPENAI | `OPENAI_KEY` | gpt-4o-mini |
+| GROQ | `GROQ_KEY` | llama-3.3-70b-versatile |
+| OPENROUTER | `OPENROUTER_KEY` | meta-llama/llama-3.3-70b-instruct:free |
+
+```bash
+# Elegí al menos uno
+export OPENAI_KEY="sk-..."
+export GROQ_KEY="gsk_..."
+export OPENROUTER_KEY="sk-or-..."
+
+# Verificá qué está configurado
+npx skill-periodistico keys
+```
+
+También podés guardar la key en `~/.config/skill-periodistico/<proveedor>.key` o pasarla con `--key`.
+
 ## Skills (20)
 
 | Skill | Función |
@@ -81,6 +104,7 @@ npx skill-periodistico radar --key "tu_key"
 | `agenda-propria` | **NUEVO** — Construir agenda desde gaps y huérdanas |
 | `cobertura-crisis` | **NUEVO** — Emergencias, alertas y desastres con precisión |
 | `seo-noticias` | **NUEVO** — SEO periodístico sin clickbait |
+| `integracion-llm` | **NUEVO** — Conectar OPENAI, GROQ y OPENROUTER para generar piezas |
 
 ## Tareas (15)
 
@@ -113,6 +137,7 @@ npx skill-periodistico list
 npx skill-periodistico skill periodista-criterio
 npx skill-periodistico score --proximidad_local 90 --novedad 80 --verificabilidad 100 --json
 npx skill-periodistico prompt reel --medio "Mi Medio" --voz urbano-agil
+npx skill-periodistico keys
 
 # Radar Notiviral (requiere FENIX_KEY o --key)
 npx skill-periodistico radar --provincia AR-A --ventana 6h --orden velocidad
@@ -121,6 +146,11 @@ npx skill-periodistico gaps --provincia AR-A --ventana 24h
 npx skill-periodistico pipeline placa --provincia AR-A --ventana 6h --medio "Mi Medio"
 npx skill-periodistico digesto --provincia AR-A --ventana 6h
 npx skill-periodistico verificar --afirmacion "Subió 40%" --material '{"fuente":"vecino"}'
+
+# Generar pieza completa (requiere OPENAI_KEY, GROQ_KEY u OPENROUTER_KEY)
+npx skill-periodistico generar placa --provincia AR-A --ventana 6h --proveedor groq
+npx skill-periodistico generar articulo --provincia AR-A --proveedor openai --modelo gpt-4o
+npx skill-periodistico generar reel --provincia AR-A --proveedor openrouter --modelo google/gemini-flash-1.5
 ```
 
 ## API como librería
@@ -157,6 +187,28 @@ clasificarEvidencia({ prueba: 'documento' });        // N1
 clasificarEvidencia({ quien_dice: 'un vecino' });    // N4
 verificarCifra({ valor: '40%', fuente: 'vecino' });  // alertas: período y denominador
 controlFinal({ invento_datos: false });                // aprobado: true
+```
+
+## LLM como librería
+
+```js
+const { generar, generarJson, estadoKeys } = require('skill-periodistico/src/llm.js');
+
+estadoKeys(); // qué proveedores están configurados
+
+// Generar con el proveedor detectado (OPENAI > GROQ > OPENROUTER)
+const r = await generarJson({
+  system: 'Sos un periodista de Mi Medio...',
+  user: 'Redactá la nota...',
+});
+console.log(r.json); // objeto parseado
+
+// Con proveedor y modelo explícitos
+const r2 = await generar({
+  proveedor: 'groq',
+  modelo: 'llama-3.3-70b-versatile',
+  system: '...', user: '...', temperature: 0.3,
+});
 ```
 
 ## Pruebas
